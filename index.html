@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GLITCH CORE</title>
+
+<style>
+body {
+    margin: 0;
+    overflow: hidden;
+    background: radial-gradient(circle at center, #120018, #000);
+    font-family: 'Orbitron', sans-serif;
+}
+
+/* PANEL UI MORADO */
+#ui {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    padding: 15px 20px;
+    background: rgba(60, 0, 90, 0.6);
+    border: 2px solid #bb00ff;
+    border-radius: 12px;
+    box-shadow: 0 0 20px #bb00ff;
+    color: #e0b3ff;
+    backdrop-filter: blur(10px);
+    z-index: 10;
+}
+
+#ui h1 {
+    margin: 0 0 10px 0;
+    font-size: 18px;
+    letter-spacing: 2px;
+}
+
+#score {
+    font-size: 22px;
+    color: #ff66ff;
+    text-shadow: 0 0 15px #ff00ff;
+    margin-bottom: 5px;
+}
+
+#status.glitch {
+    animation: flicker 0.1s infinite;
+    color: #ff00ff;
+}
+
+@keyframes flicker {
+    0% { opacity: 1; }
+    50% { opacity: 0.3; }
+    100% { opacity: 1; }
+}
+
+#video-container {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    width: 150px;
+    height: 110px;
+    border: 2px solid #bb00ff;
+    border-radius: 10px;
+    box-shadow: 0 0 15px #bb00ff;
+    transform: scaleX(-1);
+}
+video { width: 100%; height: 100%; object-fit: cover; }
+</style>
+</head>
+
+<body>
+
+<div id="ui">
+    <h1>GLITCH CORE</h1>
+    <div id="score">PUNTOS: 0</div>
+    <p id="status">IA INICIANDO...</p>
+</div>
+
+<div id="video-container">
+    <video id="webcam" autoplay playsinline></video>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "vision": "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { FaceLandmarker, FilesetResolver } from "vision";
+
+let faceLandmarker;
+let lastVideoTime = -1;
+let freezeWorld = false;
+let lastNoseX = 0;
+let score = 0;
+
+const webcam = document.getElementById("webcam");
+
+// ESCENA
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x120018);
+
+const camera = new THREE.PerspectiveCamera(70, innerWidth/innerHeight, 0.1, 100);
+camera.position.set(0,3,6);
+
+const renderer = new THREE.WebGLRenderer({ antialias:true });
+renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// GRID MORADO
+const grid = new THREE.GridHelper(50, 50, 0xbb00ff, 0x220033);
+scene.add(grid);
+
+// JUGADOR ESTÉTICO
+const player = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.7,0.7,1.2,32),
+    new THREE.MeshStandardMaterial({
+        color: 0xaa00ff,
+        emissive: 0x5500aa,
+        metalness: 0.9,
+        roughness: 0.2
+    })
+);
+player.position.y = 0.6;
+scene.add(player);
+
+// LUCES
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const light = new THREE.PointLight(0xbb00ff, 15);
+light.position.set(0,5,5);
+scene.add(light);
+
+// OBSTÁCULOS
+const obstacles = [];
+
+function spawnObstacle() {
+    const obs = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.6, 0),
+        new THREE.MeshStandardMaterial({
+            color: Math.random() * 0xffffff,
+            emissive: 0x550055,
+            metalness: 1,
+            roughness: 0.1
+        })
+    );
+    obs.position.set((Math.random()-0.5)*8, 0.7, -10);
+    scene.add(obs);
+    obstacles.push(obs);
+}
+
+function checkCollision(a, b){
+    return a.position.distanceTo(b.position) < 1.2;
+}
+
+// IA
+async function initIA(){
+    const resolver = await FilesetResolver.forVisionTasks(
+        "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.3/wasm"
+    );
+
+    faceLandmarker = await FaceLandmarker.createFromOptions(resolver,{
+        baseOptions:{ modelAssetPath:"https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"},
+        runningMode:"VIDEO",
+        numFaces:1
+    });
+
+    const stream = await navigator.mediaDevices.getUserMedia({video:true});
+    webcam.srcObject = stream;
+
+    webcam.onloadeddata = () => {
+        document.getElementById("status").innerText = "IA ACTIVA";
+        animate();
+    };
+}
+
+function animate(){
+    requestAnimationFrame(animate);
+
+    if (webcam.currentTime !== lastVideoTime) {
+        lastVideoTime = webcam.currentTime;
+        const res = faceLandmarker.detectForVideo(webcam, performance.now());
+
+        if(res.faceLandmarks?.length){
+            const lm = res.faceLandmarks[0];
+
+            // BOCA = CONGELAR
+            const mouth = Math.abs(lm[13].y - lm[14].y);
+
+            if(mouth > 0.07){
+                freezeWorld = true;
+                document.getElementById("status").classList.add("glitch");
+                document.getElementById("status").innerText = "⚠ SISTEMA CONGELADO ⚠";
+            } else {
+                freezeWorld = false;
+                document.getElementById("status").classList.remove("glitch");
+                document.getElementById("status").innerText = "ENTORNO INESTABLE";
+            }
+
+            // AGITACIÓN = GLITCH + SPAWN
+            const noseX = lm[4].x;
+            const shake = Math.abs(noseX - lastNoseX);
+            lastNoseX = noseX;
+
+            if(shake > 0.03){
+                scene.background = new THREE.Color(Math.random()*0xffffff);
+                spawnObstacle();
+            }
+
+            player.position.x = (noseX - 0.5) * 5;
+        }
+    }
+
+    if(!freezeWorld){
+        grid.position.z += 0.1;
+        if(grid.position.z > 2) grid.position.z = 0;
+    }
+
+    obstacles.forEach((o, index) => {
+        if(!freezeWorld){
+            o.position.z += 0.2;
+            o.rotation.x += 0.05;
+            o.rotation.y += 0.05;
+        }
+
+        if(checkCollision(player, o)){
+            score++;
+            document.getElementById("score").innerText = "PUNTOS: " + score;
+            scene.remove(o);
+            obstacles.splice(index,1);
+        }
+    });
+
+    renderer.render(scene, camera);
+}
+
+window.addEventListener("resize", ()=>{
+    camera.aspect = innerWidth/innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(innerWidth, innerHeight);
+});
+
+initIA();
+</script>
+
+</body>
+</html>
